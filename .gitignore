@@ -1,0 +1,23 @@
+*.pyc
+__pycache__/
+# Virtual environments
+venv/
+.venv/
+rsenv/
+.vscode/
+.rsenv/
+env/
+# Environmental variables / Secrets
+.env
+#database files
+*.db
+
+.pytest_cache/
+vectorstore/*
+!vectorstore/.gitkeep
+uploads/*
+!uploads/.gitkeep
+cache/*
+!cache/.gitkeep
+*.log
+*.jsonl
