@@ -21,6 +21,10 @@ from docorchestrator import DocOrchestrator, DocOrchestratorError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+handler = logging.StreamHandler()
+handler.setLevel(logging.DEBUG)
+logging.getLogger("docorchestrator").addHandler(handler)
+logging.getLogger("docorchestrator").setLevel(logging.DEBUG)
 
 app = FastAPI(
     title="Smart Insurance Document Router",

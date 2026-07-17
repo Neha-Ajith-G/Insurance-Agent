@@ -12,7 +12,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 
 class DocumentCategory(str, Enum):
@@ -342,14 +342,22 @@ class PipelineResult(BaseModel):
     token_stats: list[TokenStats]
     pipeline_elapsed: float  # wall-clock seconds, includes retries/backoff
 
+    @computed_field
     @property
     def total_input_tokens(self) -> int:
         return sum(s.input_tokens for s in self.token_stats)
 
+    @computed_field
     @property
     def total_output_tokens(self) -> int:
         return sum(s.output_tokens for s in self.token_stats)
 
+    @computed_field
+    @property
+    def total_tokens(self) -> int:
+        return sum(s.total_tokens for s in self.token_stats)
+
+    @computed_field
     @property
     def total_inference_time(self) -> float:
         return sum(s.inference_time for s in self.token_stats)

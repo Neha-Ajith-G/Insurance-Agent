@@ -290,6 +290,7 @@ class DocOrchestrator:
                 )
                 time.sleep(CLIENT_RETRY_BACKOFF_SECONDS * attempt)
                 continue
+            logger.debug("Extract turn (%s): raw reply: %s", filename, resp.text)
             try:
                 result = parse_extraction(resp.text, classification.category, document_type)
             except DocParserError as e:

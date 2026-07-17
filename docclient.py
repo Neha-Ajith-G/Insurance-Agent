@@ -40,11 +40,12 @@ class DocClient:
 
     def __init__(
         self,
-        model: str = "qwen3:4b",
+        model: str = "qwen2.5:1.5b",
         base_url: str = "http://localhost:11434",
         num_ctx: int = 4096,
-        timeout: float = 120.0,
+        timeout: float = 300.0,
         temperature: float = 0.0,
+        keep_alive: str = "10m",
         top_p: float = 0.9,
         seed: int | None = 42,
     ):
@@ -53,6 +54,7 @@ class DocClient:
         self.num_ctx = num_ctx
         self.timeout = timeout
         self.temperature = temperature
+        self.keep_alive = keep_alive
         self.top_p = top_p
         self.seed = seed
 
@@ -61,6 +63,7 @@ class DocClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
+            "keep_alive": self.keep_alive,
             "options": {
                 "num_ctx": self.num_ctx,
                 "temperature": self.temperature,

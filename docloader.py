@@ -81,10 +81,7 @@ class PdfFileLoader:
     this loader flags `needs_ocr=True` so a downstream OCR step (or the
     orchestrator) can decide what to do with it.
 
-    -- "Arowwai" becomes "A r o w w a i". _collapse_letter_spacing reverses this: within a
-    line, single spaces separate letters of the same word, while a
-    double space (or a real word boundary) does not, so runs where most
-    tokens are single characters get their internal spaces removed.
+   
     """
 
     SUPPORTED_SUFFIXES = {".pdf"}
