@@ -35,7 +35,7 @@ CLIENT_RETRY_BACKOFF_SECONDS = 0.5
 # thumb for English text), so an uncapped 200-page PDF could blow past
 # the context window -- this is the same class of OOM risk hit before
 # with Ollama's default num_ctx in the Research Scholar project.
-DEFAULT_MAX_DOCUMENT_CHARS = 8000
+DEFAULT_MAX_DOCUMENT_CHARS = 20000
 
 # Appended to the system prompt on any retry attempt after a parse
 # failure, so the model is told concretely what went wrong instead of
@@ -226,6 +226,7 @@ class DocOrchestrator:
                 )
                 time.sleep(CLIENT_RETRY_BACKOFF_SECONDS * attempt)
                 continue
+            logger.debug("Classify turn (%s): raw reply: %s", filename, resp.text)
             try:
                 result = parse_classification(resp.text)
             except DocParserError as e:
@@ -250,9 +251,15 @@ class DocOrchestrator:
                 total_tokens=resp.total_tokens,
                 inference_time=resp.inference_time,
             )
+            logger.info(
+                "Classify turn (%s): %s / %s (confidence=%s) -- reasoning: %s",
+                filename, result.category.value, result.document_type.value,
+                result.confidence, result.reasoning,
+            )
             self.pipeline_logger.log(
                 "classify_success", filename=filename, stage="classification", attempt=attempt,
                 category=result.category.value, document_type=result.document_type.value,
+                confidence=result.confidence, reasoning=result.reasoning,
                 input_tokens=resp.input_tokens, output_tokens=resp.output_tokens,
                 total_tokens=resp.total_tokens, inference_time=resp.inference_time,
             )

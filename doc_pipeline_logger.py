@@ -36,6 +36,8 @@ class PipelineEvent(BaseModel):
     attempt: int | None = None
     category: str | None = None
     document_type: str | None = None
+    confidence: float | None = None
+    reasoning: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
