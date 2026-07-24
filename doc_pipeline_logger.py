@@ -11,13 +11,18 @@ straight into pandas with `pd.read_json(path, lines=True)`.
 """
 from __future__ import annotations
 
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
 
-DEFAULT_LOG_PATH = "pipeline_events.jsonl"
+# Configurable via env var so a Docker volume mount (e.g. ./logs:/app/logs)
+# actually persists this file outside the container's ephemeral filesystem
+# -- without this, PIPELINE_LOG_PATH would default to a path inside the
+# container that disappears when the container is removed.
+DEFAULT_LOG_PATH = os.environ.get("PIPELINE_LOG_PATH", "pipeline_events.jsonl")
 
 
 class PipelineEvent(BaseModel):
@@ -36,8 +41,6 @@ class PipelineEvent(BaseModel):
     attempt: int | None = None
     category: str | None = None
     document_type: str | None = None
-    confidence: float | None = None
-    reasoning: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None

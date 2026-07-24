@@ -4,6 +4,7 @@ usage and inference time for every call.
 """
 from __future__ import annotations
 
+import os
 import logging
 import time
 
@@ -40,8 +41,8 @@ class DocClient:
 
     def __init__(
         self,
-        model: str = "qwen2.5:1.5b",
-        base_url: str = "http://localhost:11434",
+        model: str = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b"),
+        base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
         num_ctx: int = 4096,
         timeout: float = 300.0,
         temperature: float = 0.0,

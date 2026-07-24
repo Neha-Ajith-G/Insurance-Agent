@@ -1,0 +1,38 @@
+# Ollama is NOT containerized here -- it keeps running on the host, the
+# way you already have it set up. Containerizing Ollama too is a bigger
+# scope addition (managing model pulls inside the container, GPU/CPU
+# passthrough, a second image to build) that isn't needed just to
+# containerize the API layer. The one thing this means for you: keep
+# `ollama serve` running on your machine before starting this container.
+#
+# OLLAMA_BASE_URL uses host.docker.internal, Docker's DNS name for "the
+# machine running Docker" from inside a container -- NOT localhost,
+# which inside a container means "this container", not your host machine.
+# Docker Desktop (Windows/Mac) resolves this automatically. The
+# extra_hosts line below is only needed on native Linux Docker Engine;
+# it's harmless to leave in on Desktop.
+
+services:
+  insurance-doc-router:
+    build: .
+    container_name: insurance-doc-router
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=qwen2.5:3b
+      - UPLOAD_DIR=/app/uploads
+      - PIPELINE_LOG_PATH=/app/logs/pipeline_events.jsonl
+    volumes:
+      # Uploaded documents are staged here during processing (still
+      # deleted after each request finishes -- see app.py's cleanup --
+      # this just makes the staging path host-visible for debugging
+      # rather than buried in the container's temp filesystem).
+      - ./uploads:/app/uploads
+      # The structured JSONL event log persists here, surviving
+      # container restarts/rebuilds instead of living only inside the
+      # ephemeral container filesystem.
+      - ./logs:/app/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

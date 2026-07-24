@@ -30,12 +30,71 @@ logger = logging.getLogger(__name__)
 # out, just a bad completion to correct.
 CLIENT_RETRY_BACKOFF_SECONDS = 0.5
 
-# Conservative default cap on document characters sent to the model.
-# qwen3:4b is run with num_ctx=4096 (~4 chars/token is a rough rule of
-# thumb for English text), so an uncapped 200-page PDF could blow past
-# the context window -- this is the same class of OOM risk hit before
-# with Ollama's default num_ctx in the Research Scholar project.
-DEFAULT_MAX_DOCUMENT_CHARS = 20000
+# Per-call char budget sent to the model. Now used as a *chunk size*
+# rather than a hard truncation cutoff -- documents longer than this are
+# split into multiple overlapping chunks (see _chunk_text) instead of
+# having content silently discarded.
+DEFAULT_MAX_DOCUMENT_CHARS = 8000
+
+# Overlap between adjacent chunks, so a field that would otherwise land
+# right on a chunk boundary has a reasonable chance of appearing whole
+# in at least one chunk rather than being split across two.
+CHUNK_OVERLAP_CHARS = 500
+
+
+def _chunk_text(text: str, chunk_size: int, overlap: int) -> list[str]:
+    """
+    Split text into overlapping chunks of at most chunk_size chars.
+    Returns [text] unchanged (as a single "chunk") if it already fits --
+    callers don't need a special case for the common short-document path.
+    """
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start = end - overlap
+    return chunks
+
+
+def _merge_extraction_fields(fields_list: list) -> object:
+    """
+    Merge extraction results from multiple chunks of the same document
+    into one, field by field:
+    - List fields (e.g. key_points, line_items): concatenate across
+      chunks and drop exact duplicates, preserving first-seen order.
+    - Scalar fields: first non-null value found across chunks wins --
+      the field only needed to be correctly extracted from *a* chunk,
+      not every chunk.
+    Generic across whatever Pydantic model is passed in (works for any
+    of the extraction models without hardcoding field names), same
+    reasoning as the prompt-building functions already in this file.
+    """
+    if len(fields_list) == 1:
+        return fields_list[0]
+
+    model_cls = type(fields_list[0])
+    merged: dict = {}
+    for field_name in model_cls.model_fields:
+        values = [getattr(f, field_name) for f in fields_list]
+        if any(isinstance(v, list) for v in values):
+            merged_list: list = []
+            for v in values:
+                if isinstance(v, list):
+                    for item in v:
+                        if item not in merged_list:
+                            merged_list.append(item)
+            merged[field_name] = merged_list
+        else:
+            merged[field_name] = next((v for v in values if v is not None), None)
+    return model_cls.model_validate(merged)
+
+
 
 # Appended to the system prompt on any retry attempt after a parse
 # failure, so the model is told concretely what went wrong instead of
@@ -172,27 +231,32 @@ class DocOrchestrator:
             )
 
         text = doc.text
-        if len(text) > self.max_document_chars:
-            logger.warning(
-                "Truncating %s: %d chars exceeds max_document_chars=%d",
-                doc.filename, len(text), self.max_document_chars,
+        chunks = _chunk_text(text, self.max_document_chars, CHUNK_OVERLAP_CHARS)
+        if len(chunks) > 1:
+            logger.info(
+                "%s: %d chars split into %d overlapping chunks (chunk_size=%d) "
+                "-- classify runs on the first chunk, extract runs on every chunk",
+                doc.filename, len(text), len(chunks), self.max_document_chars,
             )
             self.pipeline_logger.log(
-                "document_truncated",
+                "document_chunked",
                 file_path=doc.file_path,
                 filename=doc.filename,
-                error=f"{len(text)} chars exceeds max_document_chars={self.max_document_chars}",
+                error=f"{len(text)} chars split into {len(chunks)} chunks of {self.max_document_chars}",
             )
-            text = text[: self.max_document_chars]
 
-        classification, classify_stats = self._classify(text, doc.filename)
+        # Classification only needs to determine a single type label, not
+        # every field in the document -- runs on the first chunk rather
+        # than being chunked+voted across all of them, which would double
+        # the complexity of this change for comparatively little benefit.
+        classification, classify_stats = self._classify(chunks[0], doc.filename)
         logger.info(
             "Classification complete for %s: %s / %s",
             doc.filename, classification.category.value, classification.document_type.value,
         )
 
-        extraction, extract_stats = self._extract(text, classification, doc.filename)
-        logger.info("Extraction complete for %s", doc.filename)
+        extraction, extract_stats_list = self._extract_chunks(chunks, classification, doc.filename)
+        logger.info("Extraction complete for %s (%d chunk(s))", doc.filename, len(chunks))
 
         pipeline_elapsed = time.perf_counter() - pipeline_start
         result = PipelineResult(
@@ -200,7 +264,7 @@ class DocOrchestrator:
             filename=doc.filename,
             classification=classification,
             extraction=extraction,
-            token_stats=[classify_stats, extract_stats],
+            token_stats=[classify_stats, *extract_stats_list],
             pipeline_elapsed=pipeline_elapsed,
         )
         logger.info("Pipeline finished: %s (%.3fs)", path, pipeline_elapsed)
@@ -271,6 +335,43 @@ class DocOrchestrator:
         raise DocOrchestratorError(
             f"Classification failed after {self.max_retries + 1} attempts: {last_err}"
         )
+
+    def _extract_chunks(
+        self, chunks: list[str], classification: ClassificationResult, filename: str
+    ) -> tuple[ExtractionResult, list[TokenStats]]:
+        """
+        Runs extraction over every chunk (each with its own independent
+        retry logic via _extract, unchanged) and merges the results into
+        one ExtractionResult. For the common single-chunk case this is
+        just a thin pass-through with no merge step.
+        """
+        if len(chunks) == 1:
+            result, stats = self._extract(chunks[0], classification, filename)
+            return result, [stats]
+
+        results: list[ExtractionResult] = []
+        stats_list: list[TokenStats] = []
+        for i, chunk in enumerate(chunks, start=1):
+            logger.info(
+                "Extracting chunk %d/%d for %s", i, len(chunks), filename
+            )
+            result, stats = self._extract(chunk, classification, filename)
+            results.append(result)
+            stats_list.append(stats)
+
+        merged_fields = _merge_extraction_fields([r.fields for r in results])
+        merged_result = ExtractionResult(
+            category=classification.category,
+            document_type=classification.document_type,
+            fields=merged_fields,
+        )
+        self.pipeline_logger.log(
+            "extract_chunks_merged",
+            filename=filename, stage="extraction",
+            document_type=classification.document_type.value,
+            error=f"merged {len(chunks)} chunk results",
+        )
+        return merged_result, stats_list
 
     def _extract(
         self, text: str, classification: ClassificationResult, filename: str
