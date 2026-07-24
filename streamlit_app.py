@@ -141,7 +141,7 @@ with st.sidebar:
                     st.error(f"Couldn't reach the API: {e}")
 
     st.divider()
-    st.caption("Backend status")
+    st.caption("Connectivity status")
     try:
         health = requests.get(f"{API_BASE_URL}/health", timeout=5).json()
         if health.get("ollama_reachable"):
@@ -159,27 +159,145 @@ if not st.session_state.access_token:
     st.info("Log in or register from the sidebar to classify documents and view your history.")
     st.stop()
 
-tab_classify, tab_documents = st.tabs(["📥 Classify a Document", "📁 My Documents"])
+def render_agentic_result(state: dict, heading: str) -> None:
+    st.subheader(heading)
+
+    # Verification Badge
+    verif = state.get("verification")
+    if verif is None:
+        v_passed = False
+        v_score = 0.0
+        v_reasoning = "Verification pending or unexecuted."
+        v_evidence = []
+        v_unsupported = []
+        is_pending = True
+    else:
+        v_passed = verif.get("passed", False)
+        v_score = verif.get("score", 0.0)
+        v_reasoning = verif.get("reasoning", "")
+        v_evidence = verif.get("evidence_quotes", [])
+        v_unsupported = verif.get("unsupported_claims", [])
+        is_pending = False
+
+    v_col1, v_col2 = st.columns([1, 2])
+    with v_col1:
+        if is_pending:
+            st.warning("🟡 **Responder Gate: PENDING / UNEXECUTED**")
+        elif v_passed:
+            st.success(f"🟢 **Responder Gate: VERIFIED** (Score: {v_score:.0%})")
+        else:
+            st.error(f"🔴 **Responder Gate: UNGROUNDED** (Score: {v_score:.0%})")
+    with v_col2:
+        st.caption(f"**Verification Reasoning:** {v_reasoning}")
+
+    if v_evidence:
+        with st.expander("🔍 Source Evidence Quotes"):
+            for q in v_evidence:
+                st.markdown(f"- *\"{q}\"*")
+
+    if v_unsupported:
+        with st.expander("⚠️ Unsupported / Hallucinated Claims Flagged"):
+            for u in v_unsupported:
+                st.markdown(f"- ❌ {u}")
+
+    # Summary metrics
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Category", (state.get("category") or "Unknown").replace("_", " ").title())
+    m2.metric("Doc Type", (state.get("document_type") or "Unknown").replace("_", " ").title())
+    m3.metric("Total Tokens", f"{state.get('total_tokens', 0):,}")
+    m4.metric("Total Elapsed", f"{state.get('total_elapsed', 0.0):.2f}s")
+
+    # Fixed & Open Schema Tabs
+    s_tab1, s_tab2, s_tab3, s_tab4 = st.tabs([
+        "📋 Fixed Schema", "⚡ Open Schema (Discovered)", "🐾 Planner Trace", "💬 QA Answer"
+    ])
+
+    with s_tab1:
+        st.markdown("#### Fixed Schema Fields")
+        fixed = state.get("fixed_schema") or {}
+        if isinstance(fixed, dict) and fixed:
+            field_rows = format_extraction_fields(fixed)
+            st.table({"Field": [r[0] for r in field_rows], "Value": [r[1] for r in field_rows]})
+        else:
+            st.info("No fixed schema extracted.")
+
+    with s_tab2:
+        st.markdown("#### Dynamic Open Schema (Discovered Structure)")
+        open_s = state.get("open_schema") or {}
+        if isinstance(open_s, dict):
+            if open_s.get("summary"):
+                st.caption(f"**Structural Summary:** {open_s['summary']}")
+            kvs = open_s.get("key_value_pairs") or {}
+            if kvs:
+                st.markdown("##### Dynamic Key-Value Pairs")
+                st.table({"Key": list(kvs.keys()), "Discovered Value": [str(v) for v in kvs.values()]})
+            tables = open_s.get("tables") or []
+            if tables:
+                st.markdown("##### Extracted Product / Claim Tables")
+                for tbl in tables:
+                    st.write(f"**Table: {tbl.get('table_name', 'Items')}**")
+                    st.json(tbl.get("rows", []))
+        else:
+            st.info("No open schema discovered.")
+
+    with s_tab3:
+        st.markdown("#### Planner-Executor Trace")
+        history = state.get("history") or []
+        if history:
+            trace_rows = []
+            for step in history:
+                act = step.get("action") or {}
+                trace_rows.append({
+                    "Step": step.get("step_number"),
+                    "Tool Action": act.get("tool"),
+                    "Rationale": act.get("rationale"),
+                    "Result Summary": step.get("result_summary"),
+                    "Tokens": step.get("token_cost"),
+                    "Time (s)": f"{step.get('inference_time', 0.0):.2f}",
+                })
+            st.table(trace_rows)
+        else:
+            st.info("No trace steps available.")
+
+    with s_tab4:
+        st.markdown("#### Document QA Answer")
+        if state.get("user_query"):
+            st.markdown(f"**Query:** {state['user_query']}")
+            st.markdown(f"**Grounded Answer:** {state.get('qa_answer', 'No answer generated.')}")
+        else:
+            st.info("No query was provided for this execution.")
+
+    with st.expander("Raw AgentState JSON"):
+        st.json(state)
+
+
+# ===== Main UI Tabs =====
+tab_classify, tab_agentic, tab_documents = st.tabs([
+    "📥 Classify (Deterministic)", "🤖 AgenticIE Router & QA", "📁 My Documents"
+])
 
 # ===== Tab 1: classify a new document =====
 with tab_classify:
-    st.caption("Upload an insurance document to classify it and extract structured fields.")
+    st.caption("Upload an insurance document to run the deterministic classification pipeline.")
 
     uploaded_file = st.file_uploader(
-        "Choose a document", type=["txt", "md", "pdf", "docx"]
+        "Choose a document", type=["txt", "md", "pdf", "docx", "png", "jpg", "jpeg", "tiff", "bmp"], key="det_uploader"
     )
 
     if uploaded_file is not None:
-        if st.button("Classify document", type="primary"):
-            with st.spinner("Classifying and extracting -- this can take 20-60s on local hardware..."):
+        if st.button("Classify document", type="primary", key="det_btn"):
+            with st.spinner("Classifying and extracting..."):
                 try:
                     files = {"file": (uploaded_file.name, uploaded_file.getvalue())}
                     resp = requests.post(
                         f"{API_BASE_URL}/classify",
                         files=files,
                         headers=auth_headers(),
-                        timeout=300,
+                        timeout=600,
                     )
+                except requests.exceptions.ReadTimeout:
+                    st.error("⏰ Request timed out (600s limit). The local LLM model took too long to complete classification.")
+                    resp = None
                 except requests.RequestException as e:
                     st.error(f"Couldn't reach the API: {e}")
                     resp = None
@@ -203,9 +321,60 @@ with tab_classify:
             heading=f"Results -- {st.session_state.last_result['filename']}",
         )
 
-# ===== Tab 2: previously uploaded documents =====
+
+# ===== Tab 2: AgenticIE Router & QA =====
+with tab_agentic:
+    st.caption("Agentic Information Extraction (Planner, Executor, Responder) with open schema discovery & grounded verification.")
+
+    ag_file = st.file_uploader(
+        "Upload document for AgenticIE", type=["txt", "md", "pdf", "docx", "png", "jpg", "jpeg", "tiff", "bmp"], key="ag_uploader"
+    )
+    ag_query = st.text_input("Optional natural language question (QA):", key="ag_query_input")
+    use_baseline = st.checkbox("Include deterministic baseline tables/context in AgentState", value=True)
+
+    if ag_file is not None:
+        if st.button("Run AgenticIE Engine", type="primary", key="ag_btn"):
+            with st.spinner("AgenticIE Planner, Executor & Responder loop running..."):
+                try:
+                    files = {"file": (ag_file.name, ag_file.getvalue())}
+                    params = {}
+                    if ag_query.strip():
+                        params["user_query"] = ag_query.strip()
+                    params["use_deterministic_baseline"] = str(use_baseline).lower()
+
+                    resp = requests.post(
+                        f"{API_BASE_URL}/agentic/process",
+                        files=files,
+                        params=params,
+                        headers=auth_headers(),
+                        timeout=600,
+                    )
+                except requests.exceptions.ReadTimeout:
+                    st.error("⏰ Request timed out (600s limit). The multi-turn AgenticIE execution took longer than expected on local hardware.")
+                    resp = None
+                except requests.RequestException as e:
+                    st.error(f"Couldn't reach the API: {e}")
+                    resp = None
+
+            if resp is not None:
+                if resp.status_code == 200:
+                    st.session_state.last_agentic_result = resp.json()
+                elif resp.status_code == 401:
+                    st.error("Session expired -- log in again.")
+                else:
+                    st.error(f"AgenticIE failed ({resp.status_code}): {resp.text}")
+
+    if st.session_state.get("last_agentic_result"):
+        st.divider()
+        render_agentic_result(
+            st.session_state.last_agentic_result,
+            heading=f"AgenticIE Results -- {st.session_state.last_agentic_result.get('filename')}",
+        )
+
+
+# ===== Tab 3: previously uploaded documents =====
 with tab_documents:
-    st.caption("Documents you've previously classified.")
+    st.caption("Documents you've previously classified or processed.")
 
     if st.button("🔄 Refresh list"):
         st.session_state.pop("document_list", None)
