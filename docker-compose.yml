@@ -23,6 +23,7 @@ services:
       - OLLAMA_MODEL=qwen2.5:3b
       - UPLOAD_DIR=/app/uploads
       - PIPELINE_LOG_PATH=/app/logs/pipeline_events.jsonl
+      - AGENTIC_PIPELINE_LOG_PATH=/app/logs/agentic_pipeline_events.jsonl
     volumes:
       # Uploaded documents are staged here during processing (still
       # deleted after each request finishes -- see app.py's cleanup --
