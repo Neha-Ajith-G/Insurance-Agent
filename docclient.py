@@ -44,7 +44,7 @@ class DocClient:
         model: str = os.environ.get("OLLAMA_MODEL", "qwen2.5:3b"),
         base_url: str = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434"),
         num_ctx: int = 4096,
-        timeout: float = 300.0,
+        timeout: float = float(os.environ.get("OLLAMA_TIMEOUT", "600.0")),
         temperature: float = 0.0,
         keep_alive: str = "10m",
         top_p: float = 0.9,
@@ -85,6 +85,11 @@ class DocClient:
                 f"{self.base_url}/api/generate", json=payload, timeout=self.timeout
             )
             resp.raise_for_status()
+        except requests.exceptions.ReadTimeout as e:
+            raise DocClientError(
+                f"Ollama request timed out after {self.timeout}s. "
+                f"Local model generation took longer than expected: {e}"
+            ) from e
         except requests.RequestException as e:
             raise DocClientError(f"Ollama request failed: {e}") from e
         elapsed = time.perf_counter() - start
