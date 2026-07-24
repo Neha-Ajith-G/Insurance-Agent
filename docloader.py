@@ -216,6 +216,23 @@ def _normalize_text(text: str) -> str:
     return text.strip()
 
 
+class ImageFileLoader:
+    """Loads image files (.png, .jpg, .jpeg, .tiff, .bmp) flagged for OCR."""
+
+    SUPPORTED_SUFFIXES = {".png", ".jpg", ".jpeg", ".tiff", ".bmp"}
+
+    def can_load(self, path: Path) -> bool:
+        return path.suffix.lower() in self.SUPPORTED_SUFFIXES
+
+    def load(self, path: Path) -> LoadedDocument:
+        return LoadedDocument(
+            filename=path.name,
+            file_type="image",
+            text="",
+            needs_ocr=True,
+        )
+
+
 class DocLoader:
     """
     Loads a document from disk, delegating the actual read to whichever
@@ -223,13 +240,11 @@ class DocLoader:
     """
 
     def __init__(self, loaders: list[FileTypeLoader] | None = None):
-        # Default to text + PDF + DOCX support; callers can pass
-        # additional loaders (e.g. a future OCR-backed loader for
-        # scanned PDFs) without touching this class.
+        # Default to text + PDF + DOCX + Image support
         self._loaders: list[FileTypeLoader] = (
             loaders
             if loaders is not None
-            else [TextFileLoader(), PdfFileLoader(), DocxFileLoader()]
+            else [TextFileLoader(), PdfFileLoader(), DocxFileLoader(), ImageFileLoader()]
         )
 
     def load(self, path: str) -> LoadedDocument:

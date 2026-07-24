@@ -361,3 +361,4 @@ class PipelineResult(BaseModel):
     @property
     def total_inference_time(self) -> float:
         return sum(s.inference_time for s in self.token_stats)
+

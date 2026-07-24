@@ -2,20 +2,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first, separately from the app code, so Docker's
-# layer cache only reinstalls packages when requirements.txt actually
-# changes -- not on every code edit.
+# Install system dependencies (tesseract-ocr for image OCR)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dependencies first for Docker caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# App code
-COPY app.py .
-COPY docloader.py .
-COPY docclient.py .
-COPY docmodels.py .
-COPY docparsers.py .
-COPY docorchestrator.py .
-COPY doc_pipeline_logger.py .
+# App code -- copy all source code
+COPY . .
 
 EXPOSE 8000
 
