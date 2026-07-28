@@ -14,8 +14,7 @@ import os
 import requests
 import streamlit as st
 
-from ui_helpers import (
-    confidence_label,
+from utils.ui_helpers import (
     format_extraction_fields,
     format_token_summary,
     format_turn_breakdown,
@@ -207,9 +206,9 @@ def render_agentic_result(state: dict, heading: str) -> None:
     m3.metric("Total Tokens", f"{state.get('total_tokens', 0):,}")
     m4.metric("Total Elapsed", f"{state.get('total_elapsed', 0.0):.2f}s")
 
-    # Fixed & Open Schema Tabs
-    s_tab1, s_tab2, s_tab3, s_tab4 = st.tabs([
-        "📋 Fixed Schema", "⚡ Open Schema (Discovered)", "🐾 Planner Trace", "💬 QA Answer"
+    # Fixed & Open Schema & Chunks Tabs
+    s_tab1, s_tab2, s_tab3, s_tab4, s_tab5 = st.tabs([
+        "📋 Fixed Schema", "⚡ Open Schema (Discovered)", "🐾 Planner Trace", "💬 QA Answer", "🧩 Contextual Chunks"
     ])
 
     with s_tab1:
@@ -260,12 +259,114 @@ def render_agentic_result(state: dict, heading: str) -> None:
             st.info("No trace steps available.")
 
     with s_tab4:
-        st.markdown("#### Document QA Answer")
+        st.markdown("#### Document QA & Interactive Chatbot")
+        filename = state.get("filename", "document.txt")
+
         if state.get("user_query"):
-            st.markdown(f"**Query:** {state['user_query']}")
+            st.markdown(f"**Initial Query:** {state['user_query']}")
             st.markdown(f"**Grounded Answer:** {state.get('qa_answer', 'No answer generated.')}")
         else:
-            st.info("No query was provided for this execution.")
+            st.info("No initial query was provided during process run.")
+
+        st.divider()
+        st.markdown("##### 💬 Continue Chat as Chatbot")
+        
+        # Initialize session state for interactive chatbot
+        chat_key = f"chat_session_{filename}"
+        if chat_key not in st.session_state:
+            st.session_state[chat_key] = []
+            if state.get("user_query") and state.get("qa_answer"):
+                st.session_state[chat_key].append({"role": "user", "content": state["user_query"]})
+                st.session_state[chat_key].append({"role": "assistant", "content": state["qa_answer"]})
+
+        # Button to launch/toggle active chatbot view
+        show_chat = st.checkbox("💬 Enable Interactive Chatbot Interface", value=True, key=f"btn_chat_{filename}")
+
+        if show_chat:
+            st.caption(f"Chatting regarding `{filename}` using local ChromaDB vectors & Ollama RAG pipeline.")
+            
+            # Display chat message thread
+            for msg in st.session_state[chat_key]:
+                with st.chat_message(msg["role"]):
+                    st.write(msg["content"])
+
+            # Chat prompt input
+            user_msg = st.chat_input(f"Ask follow-up questions about {filename}...", key=f"input_{filename}")
+            if user_msg:
+                # Add user message to state and display
+                st.session_state[chat_key].append({"role": "user", "content": user_msg})
+                with st.chat_message("user"):
+                    st.write(user_msg)
+
+                # Send RAG chat request to API
+                with st.chat_message("assistant"):
+                    with st.spinner("Searching ChromaDB vectors & generating response..."):
+                        try:
+                            payload = {
+                                "filename": filename,
+                                "query": user_msg,
+                                "chat_history": st.session_state[chat_key][:-1],
+                            }
+                            resp = requests.post(
+                                f"{API_BASE_URL}/agentic/chat",
+                                json=payload,
+                                headers=auth_headers(),
+                                timeout=120,
+                            )
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                bot_ans = data["answer"]
+                                st.write(bot_ans)
+                                st.session_state[chat_key].append({"role": "assistant", "content": bot_ans})
+                                
+                                if data.get("retrieved_chunks"):
+                                    with st.expander("🔍 ChromaDB Retrieved Chunks Used"):
+                                        for idx, r_item in enumerate(data["retrieved_chunks"], start=1):
+                                            crumbs = r_item.get("metadata", {}).get("breadcrumbs", "Document Section")
+                                            score = r_item.get("score", 1.0)
+                                            st.markdown(f"**Chunk #{idx} ({crumbs}, score: {score:.2f}):**")
+                                            st.caption(r_item.get("document", ""))
+                            else:
+                                st.error(f"Chat failed ({resp.status_code}): {resp.text}")
+                        except requests.RequestException as e:
+                            st.error(f"Couldn't reach RAG Chat API: {e}")
+
+    with s_tab5:
+        st.markdown("#### 2-Stage Contextual & Structural Chunks")
+        struct_chunks = state.get("structured_chunks") or []
+        if struct_chunks:
+            c1, c2, c3 = st.columns(3)
+            tot_raw = sum(c.get("token_count", 0) for c in struct_chunks)
+            tot_vec = sum(c.get("vector_token_count", 0) for c in struct_chunks)
+            inf_rate = round(((tot_vec - tot_raw) / max(1, tot_raw)) * 100, 2)
+            c1.metric("Distinct Chunks", len(struct_chunks))
+            c2.metric("Raw -> Vector Tokens", f"{tot_raw} -> {tot_vec}")
+            c3.metric("Token Inflation", f"+{inf_rate}%", help="~8% token inflation due to Anthropic contextual retrieval enrichment")
+
+            st.caption("Each chunk stores hierarchical breadcrumbs, metadata tags, and enriched `vector_text` for high-precision retrieval.")
+
+            for idx, chk in enumerate(struct_chunks, start=1):
+                meta = chk.get("metadata") or {}
+                breadcrumbs = " > ".join(meta.get("section_breadcrumbs", [])) or "Root Document"
+                is_tbl = meta.get("is_table", False)
+                tbl_badge = "📊 [Table Preserved Intact]" if is_tbl else "📄 [Text Section]"
+
+                with st.expander(f"Chunk #{idx}: {breadcrumbs} {tbl_badge}"):
+                    st.markdown(f"**Context Summary:** *{chk.get('context_summary', 'N/A')}*")
+                    if meta.get("company") or meta.get("fiscal_year"):
+                        st.caption(f"**Metadata:** Company: `{meta.get('company')}`, FY: `{meta.get('fiscal_year')}`")
+                    
+                    sub_t1, sub_t2 = st.tabs(["Vector Text (Enriched)", "Raw Content"])
+                    with sub_t1:
+                        st.code(chk.get("vector_text", ""), language="text")
+                    with sub_t2:
+                        st.code(chk.get("content", ""), language="text")
+        else:
+            raw_c = state.get("chunks") or []
+            st.info(f"Using {len(raw_c)} standard text chunks.")
+            for i, c in enumerate(raw_c, start=1):
+                with st.expander(f"Chunk #{i}"):
+                    st.code(c, language="text")
 
     with st.expander("Raw AgentState JSON"):
         st.json(state)

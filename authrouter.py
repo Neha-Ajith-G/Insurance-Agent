@@ -10,9 +10,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from auth import authenticate_user, create_access_token, get_current_user, hash_password
-from authdb import UserExistsError, create_user, init_db
-from authmodels import Token, UserCreate, UserOut
+from db.auth import authenticate_user, create_access_token, get_current_user, hash_password
+from db.authdb import UserExistsError, create_user, init_db
+from models.authmodels import Token, UserCreate, UserOut
 
 router = APIRouter(tags=["auth"])
 

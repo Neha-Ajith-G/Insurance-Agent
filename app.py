@@ -14,16 +14,17 @@ import shutil
 import tempfile
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from pydantic import BaseModel
 
-from auth import get_current_user
-from authmodels import UserOut
+from db.auth import get_current_user
+from models.authmodels import UserOut
 from authrouter import router as auth_router
-from docloader import DocLoaderError
-from agentic_ie import AgenticIEOrchestrator
-from agentic_models import AgentState
-from docmodels import PipelineResult
-from docorchestrator import DocOrchestrator, DocOrchestratorError
-from documentsdb import (
+from pipeline.docloader import DocLoaderError
+from agents.agentic_ie import AgenticIEOrchestrator
+from models.agentic_models import AgentState
+from models.docmodels import PipelineResult
+from pipeline.docorchestrator import DocOrchestrator, DocOrchestratorError
+from db.documentsdb import (
     get_agentic_execution_for_user,
     get_document_for_user,
     init_db as init_documents_db,
@@ -32,7 +33,7 @@ from documentsdb import (
     save_agentic_state,
     save_document,
 )
-from documents_models import DocumentDetail, DocumentSummary
+from models.documents_models import DocumentDetail, DocumentSummary
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -174,3 +175,50 @@ def get_document(document_id: int, current_user: UserOut = Depends(get_current_u
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
+
+
+class ChatRequest(BaseModel):
+    filename: str
+    query: str
+    chat_history: list[dict] = []
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    retrieved_chunks: list[dict]
+    tokens_used: int
+    inference_time: float
+
+
+@app.post("/agentic/chat", response_model=ChatResponse)
+def agentic_chat(
+    req: ChatRequest,
+    agentic_orch: AgenticIEOrchestrator = Depends(get_agentic_orchestrator),
+    current_user: UserOut = Depends(get_current_user),
+) -> ChatResponse:
+    """RAG Document Chatbot endpoint querying local ChromaDB vector store and Ollama model."""
+    results = agentic_orch.vector_store.search(
+        query=req.query, top_k=3, where_filter={"filename": req.filename} if req.filename else None
+    )
+    context_text = "\n\n".join([r["document"] for r in results]) if results else "No specific vector context found."
+
+    history_str = ""
+    for msg in req.chat_history[-6:]:
+        role = msg.get("role", "user").capitalize()
+        history_str += f"{role}: {msg.get('content', '')}\n"
+
+    prompt = (
+        f"You are an insurance document assistant chatbot. Answer the user's question accurately based strictly on the document text context.\n\n"
+        f"Document Filename: {req.filename}\n\n"
+        f"Retrieved Vector Context:\n{context_text}\n\n"
+        f"Recent Conversation History:\n{history_str}\n"
+        f"User Question: {req.query}\n"
+        f"Grounded Answer:"
+    )
+    resp = agentic_orch.client.generate(prompt=prompt)
+    return ChatResponse(
+        answer=resp.text.strip(),
+        retrieved_chunks=results,
+        tokens_used=resp.total_tokens,
+        inference_time=resp.inference_time,
+    )
