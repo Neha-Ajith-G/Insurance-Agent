@@ -1,11 +1,7 @@
-# Dockerignore: Exclude test files, virtual environments, logs, and databases from container image
+# Dockerignore: Exclude test cache, virtual environments, and local IDE metadata
 
-# Test files and test suites
-test_*.py
 tests/
 .pytest_cache/
-
-# Python bytecode and virtual environments
 __pycache__/
 *.pyc
 *.pyo
@@ -14,18 +10,6 @@ __pycache__/
 venv/
 ENV/
 env/
-
-# Databases and runtime logs
-*.db
-*.sqlite
-*.sqlite3
-*.log
-*.jsonl
-logs/
-data/
-scratch/
-
-# IDE and git metadata
 .git/
 .gitignore
 .dockerignore
