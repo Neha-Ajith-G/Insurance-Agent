@@ -23,6 +23,22 @@ def normalize_document_detail(doc: dict) -> dict:
     }
 
 
+def confidence_label(conf: float | str | None) -> str | None:
+    if conf is None:
+        return None
+    try:
+        val = float(conf)
+    except (ValueError, TypeError):
+        return None
+
+    if val >= 0.8:
+        return "High"
+    if val >= 0.5:
+        return "Medium"
+    return "Low"
+
+
+
 def format_extraction_fields(fields: dict) -> list[tuple[str, str]]:
     rows = []
     for key, value in fields.items():
