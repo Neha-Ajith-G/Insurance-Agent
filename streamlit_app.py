@@ -15,6 +15,7 @@ import requests
 import streamlit as st
 
 from utils.ui_helpers import (
+    confidence_label,
     format_extraction_fields,
     format_token_summary,
     format_turn_breakdown,
@@ -22,6 +23,8 @@ from utils.ui_helpers import (
 )
 
 API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+API_TIMEOUT = int(os.environ.get("API_TIMEOUT", "60"))
+API_LONG_TIMEOUT = int(os.environ.get("API_LONG_TIMEOUT", "600"))
 
 st.set_page_config(
     page_title="Smart Insurance Document Router",
@@ -106,7 +109,7 @@ with st.sidebar:
                     resp = requests.post(
                         f"{API_BASE_URL}/token",
                         data={"username": login_username, "password": login_password},
-                        timeout=10,
+                        timeout=API_TIMEOUT,
                     )
                     if resp.status_code == 200:
                         st.session_state.access_token = resp.json()["access_token"]
@@ -130,7 +133,7 @@ with st.sidebar:
                     resp = requests.post(
                         f"{API_BASE_URL}/register",
                         json={"username": reg_username, "password": reg_password},
-                        timeout=10,
+                        timeout=API_TIMEOUT,
                     )
                     if resp.status_code == 201:
                         st.success("Account created -- you can log in now.")
@@ -142,7 +145,7 @@ with st.sidebar:
     st.divider()
     st.caption("Connectivity status")
     try:
-        health = requests.get(f"{API_BASE_URL}/health", timeout=5).json()
+        health = requests.get(f"{API_BASE_URL}/health", timeout=15).json()
         if health.get("ollama_reachable"):
             st.caption("🟢 API and Ollama both reachable")
         else:
@@ -482,7 +485,7 @@ with tab_documents:
 
     if "document_list" not in st.session_state:
         try:
-            resp = requests.get(f"{API_BASE_URL}/documents", headers=auth_headers(), timeout=15)
+            resp = requests.get(f"{API_BASE_URL}/documents", headers=auth_headers(), timeout=API_TIMEOUT)
             if resp.status_code == 200:
                 st.session_state.document_list = resp.json()
             elif resp.status_code == 401:
@@ -520,7 +523,7 @@ with tab_documents:
             doc_id = options[selected_label]
             try:
                 resp = requests.get(
-                    f"{API_BASE_URL}/documents/{doc_id}", headers=auth_headers(), timeout=15
+                    f"{API_BASE_URL}/documents/{doc_id}", headers=auth_headers(), timeout=API_TIMEOUT
                 )
                 if resp.status_code == 200:
                     st.divider()
